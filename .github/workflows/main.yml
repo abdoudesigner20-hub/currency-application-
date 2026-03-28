@@ -2,78 +2,60 @@ name: Build APK
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3-pip git zip unzip \
-            openjdk-17-jdk build-essential \
-            libffi-dev libssl-dev \
-            autoconf libtool pkg-config
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3 python3-pip build-essential git \
+          autoconf libtool pkg-config \
+          zip unzip openjdk-17-jdk \
+          libffi-dev libssl-dev ccache
 
-      - name: Set JAVA_HOME
-        run: echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+    - name: Install Python packages
+      run: |
+        pip3 install --upgrade pip
+        pip3 install buildozer==1.5.0 cython==0.29.33
 
-      - name: Install Python packages
-        run: |
-          pip3 install --upgrade pip
-          pip3 install buildozer cython kivmob requests
+    - name: Install Android SDK manually
+      run: |
+        SDK=$HOME/.buildozer/android/platform/android-sdk
+        mkdir -p $SDK/cmdline-tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdtools.zip
+        unzip -q cmdtools.zip -d $SDK/cmdline-tools
+        mv $SDK/cmdline-tools/cmdline-tools $SDK/cmdline-tools/latest
+        export PATH=$SDK/cmdline-tools/latest/bin:$PATH
+        yes | sdkmanager --sdk_root=$SDK --licenses > /dev/null 2>&1
+        sdkmanager --sdk_root=$SDK "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+        mkdir -p $SDK/tools/bin
+        ln -sf $SDK/cmdline-tools/latest/bin/sdkmanager $SDK/tools/bin/sdkmanager
 
-      - name: Setup Android SDK (قبل buildozer)
-        run: |
-          SDK_DIR=$HOME/.buildozer/android/platform/android-sdk
-          mkdir -p $SDK_DIR/cmdline-tools
+    - name: Build APK
+      env:
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+      run: |
+        yes | buildozer -v android debug 2>&1 | tee build.log
+        ls -la bin/ || echo "No APK found"
 
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
-          unzip -q cmdtools.zip -d $SDK_DIR/cmdline-tools
-          mv $SDK_DIR/cmdline-tools/cmdline-tools $SDK_DIR/cmdline-tools/latest
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: Currency-Converter-APK
+        path: bin/*.apk
+        if-no-files-found: warn
 
-          # الحيلة الأساسية: إنشاء المسار القديم الذي يبحث عنه buildozer
-          mkdir -p $SDK_DIR/tools/bin
-          ln -sf $SDK_DIR/cmdline-tools/latest/bin/sdkmanager \
-                 $SDK_DIR/tools/bin/sdkmanager
-          ln -sf $SDK_DIR/cmdline-tools/latest/bin/avdmanager \
-                 $SDK_DIR/tools/bin/avdmanager
-
-          export PATH=$SDK_DIR/cmdline-tools/latest/bin:$PATH
-
-          yes | sdkmanager --sdk_root=$SDK_DIR --licenses || true
-          sdkmanager --sdk_root=$SDK_DIR \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
-
-      - name: Accept licenses file
-        run: |
-          mkdir -p $HOME/.android
-          echo "count=0" > $HOME/.android/repositories.cfg
-          mkdir -p $HOME/.buildozer/android/platform/android-sdk/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > \
-            $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-
-      - name: Build APK
-        run: |
-          yes | buildozer -v android debug 2>&1 | tee build.log
-        timeout-minutes: 60
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: currency-converter-apk
-          path: bin/*.apk
-          if-no-files-found: warn
-
-      - name: Upload build log
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
